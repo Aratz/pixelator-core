@@ -15,7 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Benchmark history is now only published from `main` and `dev` pushes.
-- Leiden on large graphs is faster and uses less peak memory. On the 40-cell mix, modularity Leiden went from 22.1 s to 17.9 s, and peak heap during the algorithm dropped from 639 MB to 592 MB.
+- Leiden on large graphs is faster and uses less peak memory. On the 40-cell mix, modularity Leiden went from 22.1 s to 17.9 s, and peak heap during the algorithm dropped from 639 MB to 592 MB. Supplied partition ids are renumbered to `0..k-1`; nodes that shared a label still share one.
 
 ## [0.2.0] - 2026-09-14
 

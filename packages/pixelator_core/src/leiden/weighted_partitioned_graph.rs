@@ -88,102 +88,106 @@ impl From<PartitionedGraphStatistics> for GraphProperties {
     }
 }
 
-/// Per-community node-weight totals.
+/// Per-community node-weight totals, indexed by partition id.
 ///
-/// Partition ids produced by singlet initialization and by `normalize_partition` are dense in
-/// `0..new_partition_id`, so a `Vec` indexed by id beats hashing on the Leiden hot path. Python
-/// `run_leiden` may pass a sparse id space whose maximum is far above the node count; keep a map
-/// in that case so we do not allocate a huge zero-filled vector.
+/// Ids are dense in `0..len`: singlet initialization uses `0..num_nodes`, and
+/// [`normalize_leiden_partitions`] renumbers any other input the same way.
 #[derive(Clone)]
-enum PartitionWeights {
-    Dense(Vec<usize>),
-    Sparse(HashMap<PartitionId, usize>),
+struct PartitionWeights {
+    weights: Vec<usize>,
 }
 
 impl PartitionWeights {
-    /// Build weights from a node→partition map. Use a dense `Vec` when `new_partition_id` is
-    /// `O(num_nodes)`; otherwise keep a sparse map.
+    /// Sum `node_weights` into a vector indexed by the node→partition map.
+    ///
+    /// Every partition id must be `< new_partition_id`.
     fn from_node_partitions(
         node_to_partition: &[PartitionId],
         node_weights: &[usize],
         new_partition_id: PartitionId,
     ) -> Self {
-        let num_nodes = node_to_partition.len();
-        // Twice the node count is still linear; a max id far above that is pathological.
-        if new_partition_id > num_nodes.saturating_mul(2).max(1) {
-            let mut weights = HashMap::<PartitionId, usize>::default();
-            for (node_id, &partition_id) in node_to_partition.iter().enumerate() {
-                weights
-                    .entry(partition_id)
-                    .and_modify(|e| *e += node_weights[node_id])
-                    .or_insert(node_weights[node_id]);
-            }
-            PartitionWeights::Sparse(weights)
-        } else {
-            let mut weights = vec![0; new_partition_id];
-            for (node_id, &partition_id) in node_to_partition.iter().enumerate() {
-                weights[partition_id] += node_weights[node_id];
-            }
-            PartitionWeights::Dense(weights)
+        let mut weights = vec![0; new_partition_id];
+        for (node_id, &partition_id) in node_to_partition.iter().enumerate() {
+            weights[partition_id] += node_weights[node_id];
         }
+        PartitionWeights { weights }
     }
 
     fn singlet_from_node_weights(node_weights: &[usize]) -> Self {
-        PartitionWeights::Dense(node_weights.to_vec())
+        PartitionWeights {
+            weights: node_weights.to_vec(),
+        }
     }
 
     fn get(&self, partition_id: PartitionId) -> usize {
-        match self {
-            PartitionWeights::Dense(weights) => weights.get(partition_id).copied().unwrap_or(0),
-            PartitionWeights::Sparse(weights) => weights.get(&partition_id).copied().unwrap_or(0),
-        }
+        self.weights.get(partition_id).copied().unwrap_or(0)
     }
 
     fn add(&mut self, partition_id: PartitionId, delta: usize) {
-        match self {
-            PartitionWeights::Dense(weights) => {
-                if partition_id >= weights.len() {
-                    weights.resize(partition_id + 1, 0);
-                }
-                weights[partition_id] += delta;
-            }
-            PartitionWeights::Sparse(weights) => {
-                weights
-                    .entry(partition_id)
-                    .and_modify(|e| *e += delta)
-                    .or_insert(delta);
-            }
+        if partition_id >= self.weights.len() {
+            self.weights.resize(partition_id + 1, 0);
         }
+        self.weights[partition_id] += delta;
     }
 
     fn sub(&mut self, partition_id: PartitionId, delta: usize) {
-        match self {
-            PartitionWeights::Dense(weights) => {
-                weights[partition_id] -= delta;
-            }
-            PartitionWeights::Sparse(weights) => {
-                weights.entry(partition_id).and_modify(|e| *e -= delta);
-            }
-        }
+        self.weights[partition_id] -= delta;
     }
 
-    /// Remap non-empty partition ids through `partition_index`. Result is always dense.
+    /// Remap non-empty partition ids through `partition_index`.
     fn remap_dense(&self, partition_index: &HashMap<PartitionId, PartitionId>) -> Self {
         let mut weights = vec![0; partition_index.len()];
-        match self {
-            PartitionWeights::Dense(old) => {
-                for (&old_pid, &new_pid) in partition_index.iter() {
-                    weights[new_pid] = old.get(old_pid).copied().unwrap_or(0);
-                }
-            }
-            PartitionWeights::Sparse(old) => {
-                for (&old_pid, &new_pid) in partition_index.iter() {
-                    weights[new_pid] = old.get(&old_pid).copied().unwrap_or(0);
-                }
+        for (&old_pid, &new_pid) in partition_index.iter() {
+            weights[new_pid] = self.get(old_pid);
+        }
+        PartitionWeights { weights }
+    }
+}
+
+/// Renumber partition ids to `0..k-1` when they are not already that range.
+///
+/// The new id of an old label is its rank among the sorted unique labels, so two nodes
+/// that shared a label still share one, and the numbering does not depend on hash order.
+fn normalize_leiden_partitions(partitions: LeidenNodePartitioning) -> LeidenNodePartitioning {
+    let ids = partitions.get_node_to_partition_map();
+    if ids.is_empty() {
+        return partitions;
+    }
+    let max = ids.iter().copied().max().unwrap();
+    if max < ids.len() {
+        let mut seen = vec![false; max + 1];
+        let mut n_unique = 0usize;
+        for &id in ids {
+            if !seen[id] {
+                seen[id] = true;
+                n_unique += 1;
             }
         }
-        PartitionWeights::Dense(weights)
+        if n_unique == max + 1 {
+            return partitions;
+        }
+        let mut remap = vec![0; max + 1];
+        let mut next = 0usize;
+        for (old, used) in seen.into_iter().enumerate() {
+            if used {
+                remap[old] = next;
+                next += 1;
+            }
+        }
+        return LeidenNodePartitioning::initialize_from_partitions(
+            ids.iter().map(|&id| remap[id]).collect(),
+        );
     }
+
+    let mut uniques = ids.to_vec();
+    uniques.sort_unstable();
+    uniques.dedup();
+    let remap = uniques
+        .into_iter()
+        .enumerate()
+        .map(|(new_id, old_id)| (old_id, new_id))
+        .collect::<HashMap<PartitionId, PartitionId>>();
+    LeidenNodePartitioning::initialize_from_partitions(ids.iter().map(|id| remap[id]).collect())
 }
 
 /// A graph with weighted nodes and a partitioning, used for Leiden community detection.
@@ -212,7 +216,8 @@ impl<Q: QualityMetrics> WeightedPartitionedGraph<Q> {
     ///
     /// # Arguments
     /// - `graph`: The underlying graph structure.
-    /// - `partitions`: The current partitioning of the nodes.
+    /// - `partitions`: The current partitioning of the nodes. Ids that are not already
+    ///   `0..k-1` are renumbered to that range, in sorted label order.
     /// - `quality_metrics`: The quality metrics used for community detection. Defines how to
     ///   compute node sizes and resolution.
     /// - `node_weights`: Optional weights for each node. If None, weights are computed using using
@@ -225,6 +230,7 @@ impl<Q: QualityMetrics> WeightedPartitionedGraph<Q> {
         node_weights: Option<Vec<usize>>,
         seed: Option<u64>,
     ) -> Self {
+        let partitions = normalize_leiden_partitions(partitions);
         let node_weights = node_weights.unwrap_or_else(|| {
             (0..graph.get_num_nodes())
                 .map(|node_id| quality_metrics.node_size(&graph, node_id))
@@ -1349,25 +1355,28 @@ mod tests {
     }
 
     #[test]
-    fn test_sparse_partition_ids_keep_weights_across_moves() {
-        // Max id is far above the node count, so weights stay in the sparse map.
-        let edges = edges_from_tuples(vec![(0, 1)]);
-        let graph = Graph::<usize>::from_edges(edges, 2);
-        let partitions = LeidenNodePartitioning::initialize_from_partitions(vec![10_000, 10_000]);
+    fn test_sparse_input_partitions_are_normalized() {
+        // Far-apart labels share communities and are renumbered in sorted order.
+        let edges = edges_from_tuples(vec![(0, 1), (1, 2)]);
+        let graph = Graph::<usize>::from_edges(edges, 3);
+        let partitions =
+            LeidenNodePartitioning::initialize_from_partitions(vec![50_000, 10_000, 10_000]);
         let cpm = ConstantPottsModel { resolution: 0.5 };
         let mut wp_graph =
-            WeightedPartitionedGraph::new(graph, partitions, cpm, Some(vec![3, 4]), None);
+            WeightedPartitionedGraph::new(graph, partitions, cpm, Some(vec![3, 4, 5]), None);
 
-        assert_eq!(wp_graph.get_partition_weight(10_000), 7);
-        assert_eq!(wp_graph.get_partition_weight(0), 0);
-
-        wp_graph.update_partition_slow(1, 20_000);
-
-        assert_eq!(wp_graph.get_partition_weight(10_000), 3);
-        assert_eq!(wp_graph.get_partition_weight(20_000), 4);
         assert_eq!(
-            wp_graph.get_partition_weight(10_000) + wp_graph.get_partition_weight(20_000),
-            7
+            wp_graph.get_partitioning().get_node_to_partition_map(),
+            &[1, 0, 0]
         );
+        assert_eq!(wp_graph.get_partition_weight(0), 9);
+        assert_eq!(wp_graph.get_partition_weight(1), 3);
+
+        let new_id = wp_graph.get_partitioning().get_new_partition_id();
+        assert_eq!(new_id, 2);
+        wp_graph.update_partition_slow(2, new_id);
+        assert_eq!(wp_graph.get_partition_weight(0), 4);
+        assert_eq!(wp_graph.get_partition_weight(1), 3);
+        assert_eq!(wp_graph.get_partition_weight(2), 5);
     }
 }
