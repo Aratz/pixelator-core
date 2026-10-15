@@ -16,7 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Benchmark history is now only published from `main` and `dev` pushes.
 - Fast label propagation, connected-component export, and graph statistics are faster and use less memory on large graphs. On the 40-cell mix, label propagation went from 2.17 s to 1.60 s and its peak heap from 134 MB to 56 MB.
-- Leiden on large graphs is faster and uses less peak memory. On the 40-cell mix, modularity Leiden went from 22.1 s to 17.9 s, and peak heap during the algorithm dropped from 639 MB to 592 MB. Supplied partition ids are renumbered to `0..k-1`; nodes that shared a label still share one.
+- Leiden is faster and uses less peak memory on large graphs.
 
 ## [0.2.0] - 2026-09-14
 

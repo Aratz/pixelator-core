@@ -76,6 +76,25 @@ impl LeidenNodePartitioning {
         self.new_partition_id
     }
 
+    /// Map each non-empty partition id to a dense id in `0..k-1`.
+    ///
+    /// The dense id is the rank of the old id among the sorted unique labels.
+    pub fn get_dense_mapping(&self) -> HashMap<PartitionId, PartitionId> {
+        self.panic_if_partition_to_node_map_stale();
+        let mut old_ids: Vec<PartitionId> = self
+            .partition_to_node_map
+            .iter()
+            .filter(|(_, nodes)| !nodes.is_empty())
+            .map(|(&id, _)| id)
+            .collect();
+        old_ids.sort_unstable();
+        old_ids
+            .into_iter()
+            .enumerate()
+            .map(|(new_id, old_id)| (old_id, new_id))
+            .collect()
+    }
+
     fn panic_if_partition_to_node_map_stale(&self) {
         if self.partition_to_node_map_stale {
             panic!(
@@ -126,19 +145,14 @@ impl NodePartitioning for LeidenNodePartitioning {
     fn normalize(&mut self) {
         self.panic_if_partition_to_node_map_stale();
 
-        if self.is_normalized() {
+        let partition_map = self.get_dense_mapping();
+        if partition_map
+            .iter()
+            .all(|(&old_id, &new_id)| old_id == new_id)
+            && partition_map.len() == self.new_partition_id
+        {
             return;
         }
-
-        let partition_map = self
-            .node_partition_map
-            .iter()
-            .copied()
-            .collect::<HashSet<PartitionId>>()
-            .into_iter()
-            .enumerate()
-            .map(|(new_pid, old_pid)| (old_pid, new_pid))
-            .collect::<HashMap<PartitionId, PartitionId>>();
 
         self.node_partition_map = self
             .node_partition_map

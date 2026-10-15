@@ -90,8 +90,7 @@ impl From<PartitionedGraphStatistics> for GraphProperties {
 
 /// Per-community node-weight totals, indexed by partition id.
 ///
-/// Ids are dense in `0..len`: singlet initialization uses `0..num_nodes`, and
-/// [`normalize_leiden_partitions`] renumbers any other input the same way.
+/// Ids are dense in `0..len`.
 #[derive(Clone)]
 struct PartitionWeights {
     weights: Vec<usize>,
@@ -144,52 +143,6 @@ impl PartitionWeights {
     }
 }
 
-/// Renumber partition ids to `0..k-1` when they are not already that range.
-///
-/// The new id of an old label is its rank among the sorted unique labels, so two nodes
-/// that shared a label still share one, and the numbering does not depend on hash order.
-fn normalize_leiden_partitions(partitions: LeidenNodePartitioning) -> LeidenNodePartitioning {
-    let ids = partitions.get_node_to_partition_map();
-    if ids.is_empty() {
-        return partitions;
-    }
-    let max = ids.iter().copied().max().unwrap();
-    if max < ids.len() {
-        let mut seen = vec![false; max + 1];
-        let mut n_unique = 0usize;
-        for &id in ids {
-            if !seen[id] {
-                seen[id] = true;
-                n_unique += 1;
-            }
-        }
-        if n_unique == max + 1 {
-            return partitions;
-        }
-        let mut remap = vec![0; max + 1];
-        let mut next = 0usize;
-        for (old, used) in seen.into_iter().enumerate() {
-            if used {
-                remap[old] = next;
-                next += 1;
-            }
-        }
-        return LeidenNodePartitioning::initialize_from_partitions(
-            ids.iter().map(|&id| remap[id]).collect(),
-        );
-    }
-
-    let mut uniques = ids.to_vec();
-    uniques.sort_unstable();
-    uniques.dedup();
-    let remap = uniques
-        .into_iter()
-        .enumerate()
-        .map(|(new_id, old_id)| (old_id, new_id))
-        .collect::<HashMap<PartitionId, PartitionId>>();
-    LeidenNodePartitioning::initialize_from_partitions(ids.iter().map(|id| remap[id]).collect())
-}
-
 /// A graph with weighted nodes and a partitioning, used for Leiden community detection.
 ///
 /// In particular, it provides the `aggregate` method that makes it possible to aggregate nodes
@@ -230,7 +183,18 @@ impl<Q: QualityMetrics> WeightedPartitionedGraph<Q> {
         node_weights: Option<Vec<usize>>,
         seed: Option<u64>,
     ) -> Self {
-        let partitions = normalize_leiden_partitions(partitions);
+        let dense_ids = partitions.get_dense_mapping();
+        let partitions = if dense_ids.iter().all(|(&old_id, &new_id)| old_id == new_id) {
+            partitions
+        } else {
+            LeidenNodePartitioning::initialize_from_partitions(
+                partitions
+                    .get_node_to_partition_map()
+                    .iter()
+                    .map(|id| dense_ids[id])
+                    .collect(),
+            )
+        };
         let node_weights = node_weights.unwrap_or_else(|| {
             (0..graph.get_num_nodes())
                 .map(|node_id| quality_metrics.node_size(&graph, node_id))
@@ -367,14 +331,7 @@ impl<Q: QualityMetrics> WeightedPartitionedGraph<Q> {
 
     /// Normalize partitions so that all ids from 0 to |P| - 1 are used.
     pub fn normalize_partition(&mut self) {
-        let partition_index = self
-            .partitions
-            .get_partition_to_node_map_ref()
-            .iter()
-            .filter(|(_, nodes)| !nodes.is_empty())
-            .enumerate()
-            .map(|(new_pid, (&old_pid, _))| (old_pid, new_pid))
-            .collect::<HashMap<PartitionId, PartitionId>>();
+        let partition_index = self.partitions.get_dense_mapping();
 
         self.partitions = LeidenNodePartitioning::initialize_from_partitions(
             self.partitions
