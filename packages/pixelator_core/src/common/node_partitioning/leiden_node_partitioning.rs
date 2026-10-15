@@ -142,17 +142,32 @@ impl NodePartitioning for LeidenNodePartitioning {
         self.new_partition_id = max(self.new_partition_id, partition + 1);
     }
 
-    fn normalize(&mut self) {
+    /// True when every non-empty partition id is in `0..k-1`.
+    ///
+    /// Walks the partition map. Empty sets left behind after a node moves are ignored.
+    fn is_normalized(&self) -> bool {
         self.panic_if_partition_to_node_map_stale();
 
-        let partition_map = self.get_dense_mapping();
-        if partition_map
-            .iter()
-            .all(|(&old_id, &new_id)| old_id == new_id)
-            && partition_map.len() == self.new_partition_id
-        {
+        let mut n_partitions = 0;
+        let mut max_id = 0;
+        for (&id, nodes) in &self.partition_to_node_map {
+            if nodes.is_empty() {
+                continue;
+            }
+            n_partitions += 1;
+            max_id = max(max_id, id);
+        }
+
+        n_partitions == 0 || max_id + 1 == n_partitions
+    }
+
+    fn normalize(&mut self) {
+        self.panic_if_partition_to_node_map_stale();
+        if self.is_normalized() {
             return;
         }
+
+        let partition_map = self.get_dense_mapping();
 
         self.node_partition_map = self
             .node_partition_map
@@ -199,6 +214,36 @@ mod tests {
                 .collect::<HashSet<usize>>(),
             vec![0, 1].into_iter().collect::<HashSet<usize>>()
         );
+    }
+
+    #[test]
+    fn test_normalize_second_time_is_noop() {
+        let mut np = LeidenNodePartitioning::initialize_from_partitions(vec![3, 10, 3, 10, 10]);
+        assert!(!np.is_normalized());
+        np.normalize();
+        assert!(np.is_normalized());
+        let once = np.clone();
+
+        np.normalize();
+
+        assert_eq!(np.node_partition_map, once.node_partition_map);
+        assert_eq!(np.partition_to_node_map, once.partition_to_node_map);
+        assert_eq!(np.new_partition_id, once.new_partition_id);
+        assert_eq!(
+            np.partition_to_node_map_stale,
+            once.partition_to_node_map_stale
+        );
+    }
+
+    #[test]
+    fn test_is_normalized_ignores_empty_partition_sets() {
+        let mut np = LeidenNodePartitioning::initialize_from_partitions(vec![0, 5]);
+        np.update_partition(1, 0);
+        assert!(np.is_normalized());
+        let before = np.clone();
+        np.normalize();
+        assert_eq!(np.node_partition_map, before.node_partition_map);
+        assert_eq!(np.new_partition_id, before.new_partition_id);
     }
 
     #[test]

@@ -183,10 +183,10 @@ impl<Q: QualityMetrics> WeightedPartitionedGraph<Q> {
         node_weights: Option<Vec<usize>>,
         seed: Option<u64>,
     ) -> Self {
-        let dense_ids = partitions.get_dense_mapping();
-        let partitions = if dense_ids.iter().all(|(&old_id, &new_id)| old_id == new_id) {
+        let partitions = if partitions.is_normalized() {
             partitions
         } else {
+            let dense_ids = partitions.get_dense_mapping();
             LeidenNodePartitioning::initialize_from_partitions(
                 partitions
                     .get_node_to_partition_map()
