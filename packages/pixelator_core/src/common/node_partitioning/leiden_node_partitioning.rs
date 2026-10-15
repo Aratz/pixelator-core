@@ -187,7 +187,8 @@ impl NodePartitioning for LeidenNodePartitioning {
             })
             .collect();
 
-        self.new_partition_id = self.node_partition_map.len();
+        // Ids were renumbered to 0..k-1, so the next fresh id is the partition count.
+        self.new_partition_id = self.partition_to_node_map.len();
         self.partition_to_node_map_stale = false;
     }
 }
@@ -214,6 +215,15 @@ mod tests {
                 .collect::<HashSet<usize>>(),
             vec![0, 1].into_iter().collect::<HashSet<usize>>()
         );
+    }
+
+    #[test]
+    fn test_normalize_next_id_is_partition_count() {
+        let mut np = LeidenNodePartitioning::initialize_from_partitions(vec![3, 10, 3, 10, 10]);
+        np.normalize();
+
+        assert_eq!(np.node_partition_map, vec![0, 1, 0, 1, 1]);
+        assert_eq!(np.get_new_partition_id(), 2);
     }
 
     #[test]
