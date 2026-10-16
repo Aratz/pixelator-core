@@ -1,5 +1,3 @@
-use std::collections::hash_map::Entry;
-
 use rustc_hash::FxHashMap as HashMap;
 
 use crate::common::types::{Edge, EdgeWeight, NodeIdx, UMI, UMIPair};
@@ -10,34 +8,40 @@ pub struct UmiToNodeIndexMapping {
 }
 
 impl UmiToNodeIndexMapping {
+    /// Reserve room for about `node_capacity` nodes.
+    pub fn with_capacity(node_capacity: usize) -> Self {
+        Self {
+            node_idx_to_umi: Vec::with_capacity(node_capacity),
+            umi_to_node_idx: HashMap::with_capacity_and_hasher(node_capacity, Default::default()),
+        }
+    }
+
+    /// Return the node index for `umi`, assigning the next index if it is new.
+    pub fn get_or_insert(&mut self, umi: UMI) -> NodeIdx {
+        if let Some(&idx) = self.umi_to_node_idx.get(&umi) {
+            return idx;
+        }
+        let idx = self.node_idx_to_umi.len();
+        self.umi_to_node_idx.insert(umi, idx);
+        self.node_idx_to_umi.push(umi);
+        idx
+    }
+
     pub fn from_umi_pairs<I>(umi_pairs: I) -> Self
     where
         I: IntoIterator<Item = UMIPair>,
     {
         let umi_pairs = umi_pairs.into_iter();
-        // We can make a guess about the number of unique UMIs based on the
-        // number of pairs to improve performance when allocating
+        // Guess the number of unique UMIs from the number of pairs.
         let unique_umi_ratio_guess = umi_pairs.size_hint().0 / 5;
-        let mut node_idx_to_umi: Vec<NodeIdx> = Vec::with_capacity(unique_umi_ratio_guess);
-        let mut umi_to_node_idx: HashMap<UMI, NodeIdx> =
-            HashMap::with_capacity_and_hasher(unique_umi_ratio_guess, Default::default());
+        let mut mapping = Self::with_capacity(unique_umi_ratio_guess);
 
         for (src, dest) in umi_pairs {
-            if let Entry::Vacant(e) = umi_to_node_idx.entry(src) {
-                e.insert(node_idx_to_umi.len());
-                node_idx_to_umi.push(src);
-            }
-
-            if let Entry::Vacant(e) = umi_to_node_idx.entry(dest) {
-                e.insert(node_idx_to_umi.len());
-                node_idx_to_umi.push(dest);
-            }
+            mapping.get_or_insert(src);
+            mapping.get_or_insert(dest);
         }
 
-        Self {
-            node_idx_to_umi,
-            umi_to_node_idx,
-        }
+        mapping
     }
 
     pub fn map_node_index_to_umi(&self, node_index: NodeIdx) -> UMI {
@@ -144,5 +148,72 @@ mod tests {
             }),
             umis[2]
         );
+    }
+
+    #[test]
+    fn test_incremental_insert_matches_from_edges() {
+        use crate::common::graph::Graph;
+
+        // Includes a duplicate pair and the same pair reversed, which must sum.
+        let pairs = [
+            (11usize, 22),
+            (22, 33),
+            (33, 11),
+            (11, 22),
+            (50, 11),
+            (22, 11),
+        ];
+        let two_pass = UmiToNodeIndexMapping::from_umi_pairs(pairs.iter().copied());
+        let mut one_pass = UmiToNodeIndexMapping::with_capacity(pairs.len());
+        let triplets: Vec<(NodeIdx, NodeIdx, u8)> = pairs
+            .iter()
+            .copied()
+            .map(|(src, dest)| {
+                let (src, dest) = (one_pass.get_or_insert(src), one_pass.get_or_insert(dest));
+                (src.min(dest), src.max(dest), 1)
+            })
+            .collect();
+
+        assert_eq!(two_pass.get_num_of_nodes(), one_pass.get_num_of_nodes());
+        for &(src, dest) in &pairs {
+            assert_eq!(
+                two_pass.map_umi_to_node_index(src),
+                one_pass.map_umi_to_node_index(src)
+            );
+            assert_eq!(
+                two_pass.map_umi_to_node_index(dest),
+                one_pass.map_umi_to_node_index(dest)
+            );
+        }
+
+        let graph_two = Graph::<u8>::from_edges(
+            two_pass.map_umi_pair_iterator_to_edge(pairs.iter().copied()),
+            two_pass.get_num_of_nodes(),
+        );
+        let graph_one =
+            Graph::<u8>::from_undirected_triplets(triplets, one_pass.get_num_of_nodes());
+
+        assert_eq!(graph_one.get_num_nodes(), graph_two.get_num_nodes());
+        assert_eq!(
+            graph_one.get_edge_entry_count(),
+            graph_two.get_edge_entry_count()
+        );
+        assert_eq!(
+            graph_one.get_total_edge_weight(),
+            graph_two.get_total_edge_weight()
+        );
+        for node in 0..graph_one.get_num_nodes() {
+            let mut from_one: Vec<_> = graph_one
+                .edges_from_iter(node)
+                .map(|edge| (edge.dest, edge.weight))
+                .collect();
+            let mut from_two: Vec<_> = graph_two
+                .edges_from_iter(node)
+                .map(|edge| (edge.dest, edge.weight))
+                .collect();
+            from_one.sort_unstable();
+            from_two.sort_unstable();
+            assert_eq!(from_one, from_two);
+        }
     }
 }
