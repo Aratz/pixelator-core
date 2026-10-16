@@ -274,7 +274,8 @@ pub fn run_label_propagation(parquet_file: &str, epochs: u64, output: &str) -> P
 /// * `max_iteration` - maximum number of iterations to perform. NB: in most cases the algorithm
 /// should converge and stop by itself.
 /// * `partition` - initial node partitioning to use. If not provided, singlet partitions will be
-/// used
+/// used. Supplied ids are renumbered to `0..k-1` in sorted label order before Leiden runs;
+/// nodes that shared a label still share one.
 /// * `resolution` - resolution to use in the quality function. The larger the resolution, the
 /// smaller the resulting communities will be.
 /// * `output` - Path to the output parquet file. Default is `node_partitions.parquet`.
