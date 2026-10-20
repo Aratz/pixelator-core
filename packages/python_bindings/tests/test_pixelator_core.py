@@ -269,7 +269,7 @@ def test_pyfunctions_release_gil_during_rust_execution(
         # contend for the GIL while the main thread is inside pure-Rust code
         # between the first and second Rust log statements.
         first_emit_returned.wait(timeout=5.0)
-        time.sleep(0.005)
+        time.sleep(0.002)
         worker_ran_between_logs.set()
 
     worker = threading.Thread(target=background_worker, daemon=True)
@@ -288,10 +288,23 @@ def test_pyfunctions_release_gil_during_rust_execution(
             # be set before record #2 arrives.
             worker_ran_before_second_log = worker_ran_between_logs.is_set()
 
-    # Use the 200-cell fixture so reading the parquet file between log #1 and
-    # log #2 takes long enough (~tens of ms) for the background thread to wake
-    # from its 5ms sleep while the main thread is in pure Rust.
-    larger_parquet = str(_TEST_DATA / "mix_200cells_1pc.parquet")
+    # Synthesize a ~50k-row parquet file in tmp_path so reading the parquet file
+    # between log #1 and log #2 takes enough time (~10-50ms) for the background
+    # thread to wake from its 2ms sleep while the main thread is in pure Rust,
+    # without making the unit test slow.
+    import pyarrow as pa
+
+    n_rows = 50_000
+    synthetic_parquet = tmp_path / "synthetic_edges.parquet"
+    pq.write_table(
+        pa.table(
+            {
+                "umi1": pa.array(range(n_rows), type=pa.uint64()),
+                "umi2": pa.array(range(1, n_rows + 1), type=pa.uint64()),
+            }
+        ),
+        synthetic_parquet,
+    )
 
     root_logger = logging.getLogger()
     prev_level = root_logger.level
@@ -299,9 +312,10 @@ def test_pyfunctions_release_gil_during_rust_execution(
     root_logger.setLevel(logging.DEBUG)
     root_logger.addHandler(handler)
     try:
-        invoke(larger_parquet, tmp_path)
-        worker.join(timeout=5.0)
+        invoke(str(synthetic_parquet), tmp_path)
     finally:
+        if worker.is_alive():
+            worker.join(timeout=5.0)
         root_logger.removeHandler(handler)
         root_logger.setLevel(prev_level)
 

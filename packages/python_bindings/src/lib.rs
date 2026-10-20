@@ -52,7 +52,9 @@ mod pixelator_core_py {
 
     #[pymodule_init]
     fn init(m: &Bound<'_, PyModule>) -> PyResult<()> {
-        pyo3_log::init();
+        pyo3_log::Logger::new(m.py(), pyo3_log::Caching::Loggers)?
+            .install()
+            .expect("Someone installed a logger before pixelator_core");
         m.add("__version__", env!("CARGO_PKG_VERSION"))?;
         Ok(())
     }
