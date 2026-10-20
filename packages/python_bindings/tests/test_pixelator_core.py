@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import logging
 import threading
-import time
 from collections.abc import Callable
 from pathlib import Path
 
@@ -260,25 +259,27 @@ def test_pyfunctions_release_gil_during_rust_execution(
     between the two log calls.
     """
     worker_ran_between_logs = threading.Event()
+    worker_ready = threading.Event()
     first_emit_returned = threading.Event()
     worker_ran_before_second_log = False
     emitted_records = 0
 
     def background_worker() -> None:
+        worker_ready.set()
         # Wait until the first logging handler call is about to return so that we
         # contend for the GIL while the main thread is inside pure-Rust code
         # between the first and second Rust log statements.
         first_emit_returned.wait(timeout=5.0)
-        time.sleep(0.002)
         worker_ran_between_logs.set()
 
     worker = threading.Thread(target=background_worker, daemon=True)
+    worker.start()
+    worker_ready.wait(timeout=5.0)
 
     def on_rust_log() -> None:
         nonlocal emitted_records, worker_ran_before_second_log
         emitted_records += 1
         if emitted_records == 1:
-            worker.start()
             first_emit_returned.set()
         elif emitted_records == 2:
             # Inside `on_rust_log` the main thread holds the GIL (acquired by
@@ -288,13 +289,13 @@ def test_pyfunctions_release_gil_during_rust_execution(
             # be set before record #2 arrives.
             worker_ran_before_second_log = worker_ran_between_logs.is_set()
 
-    # Synthesize a ~50k-row parquet file in tmp_path so reading the parquet file
-    # between log #1 and log #2 takes enough time (~10-50ms) for the background
-    # thread to wake from its 2ms sleep while the main thread is in pure Rust,
-    # without making the unit test slow.
+    # Synthesize a parquet file in tmp_path so reading the parquet file and
+    # building the UMI mapping between log #1 and log #2 gives the OS scheduler
+    # ample time to wake `background_worker` while the main thread is detached
+    # from the GIL in pure Rust.
     import pyarrow as pa
 
-    n_rows = 50_000
+    n_rows = 200_000
     synthetic_parquet = tmp_path / "synthetic_edges.parquet"
     pq.write_table(
         pa.table(
@@ -314,8 +315,8 @@ def test_pyfunctions_release_gil_during_rust_execution(
     try:
         invoke(str(synthetic_parquet), tmp_path)
     finally:
-        if worker.is_alive():
-            worker.join(timeout=5.0)
+        first_emit_returned.set()
+        worker.join(timeout=5.0)
         root_logger.removeHandler(handler)
         root_logger.setLevel(prev_level)
 
