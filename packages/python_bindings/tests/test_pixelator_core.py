@@ -8,6 +8,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 import pixelator_core
+import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 
@@ -20,6 +21,23 @@ SMALL_PARQUET = _TEST_DATA / "mix_40cells_1pc_1000rows.parquet"
 def small_parquet_path() -> str:
     assert SMALL_PARQUET.is_file(), f"missing test fixture: {SMALL_PARQUET}"
     return str(SMALL_PARQUET)
+
+
+@pytest.fixture(scope="module")
+def gil_check_parquet_path(tmp_path_factory: pytest.TempPathFactory) -> str:
+    """Synthesize a medium-sized parquet file once per module for GIL release tests."""
+    n_rows = 200_000
+    synthetic_parquet = tmp_path_factory.mktemp("gil_check") / "synthetic_edges.parquet"
+    pq.write_table(
+        pa.table(
+            {
+                "umi1": pa.array(range(n_rows), type=pa.uint64()),
+                "umi2": pa.array(range(1, n_rows + 1), type=pa.uint64()),
+            }
+        ),
+        synthetic_parquet,
+    )
+    return str(synthetic_parquet)
 
 
 def test_public_api() -> None:
@@ -240,7 +258,7 @@ class _GilCheckHandler(logging.Handler):
 def test_pyfunctions_release_gil_during_rust_execution(
     name: str,
     invoke: Callable[[str, Path], object],
-    small_parquet_path: str,
+    gil_check_parquet_path: str,
     tmp_path: Path,
 ) -> None:
     """Verify each binding detaches from the GIL while executing pure-Rust steps.
@@ -250,13 +268,12 @@ def test_pyfunctions_release_gil_during_rust_execution(
     again as soon as `Handler.emit` returns.
 
     On the first Rust log record (`"Creating UMI mapping and graph edges..."`
-    emitted before parquet reading & algorithm execution), we spawn a background
-    Python thread that waits briefly (so `emit` returns and `pyo3-log` releases
-    the GIL while the main thread is mid-computation in Rust) and then sets an
-    event. On the next Rust log record (`"Creating graph..."` emitted after the
-    parquet file has been read into triplets), we assert that the background
-    thread has already run while the main thread was executing pure-Rust code
-    between the two log calls.
+    emitted before parquet reading & algorithm execution), we signal a pre-started
+    background Python thread so it contends for the GIL while the main thread is
+    mid-computation in Rust, and then sets an event. On the next Rust log record
+    (`"Creating graph..."` emitted after the parquet file has been read into
+    triplets), we assert that the background thread has already run while the main
+    thread was executing pure-Rust code between the two log calls.
     """
     worker_ran_between_logs = threading.Event()
     worker_ready = threading.Event()
@@ -289,31 +306,13 @@ def test_pyfunctions_release_gil_during_rust_execution(
             # be set before record #2 arrives.
             worker_ran_before_second_log = worker_ran_between_logs.is_set()
 
-    # Synthesize a parquet file in tmp_path so reading the parquet file and
-    # building the UMI mapping between log #1 and log #2 gives the OS scheduler
-    # ample time to wake `background_worker` while the main thread is detached
-    # from the GIL in pure Rust.
-    import pyarrow as pa
-
-    n_rows = 200_000
-    synthetic_parquet = tmp_path / "synthetic_edges.parquet"
-    pq.write_table(
-        pa.table(
-            {
-                "umi1": pa.array(range(n_rows), type=pa.uint64()),
-                "umi2": pa.array(range(1, n_rows + 1), type=pa.uint64()),
-            }
-        ),
-        synthetic_parquet,
-    )
-
     root_logger = logging.getLogger()
     prev_level = root_logger.level
     handler = _GilCheckHandler(on_rust_log)
     root_logger.setLevel(logging.DEBUG)
     root_logger.addHandler(handler)
     try:
-        invoke(str(synthetic_parquet), tmp_path)
+        invoke(gil_check_parquet_path, tmp_path)
     finally:
         first_emit_returned.set()
         worker.join(timeout=5.0)
