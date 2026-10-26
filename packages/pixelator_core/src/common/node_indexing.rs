@@ -37,6 +37,10 @@ impl Hasher for UmiHasher {
 
     #[inline]
     fn finish(&self) -> u64 {
+        // `0xf135_7aea_2e62_a9c5`: 64-bit MCG multiplier from Steele & Vigna (2021), also used by
+        // `rustc_hash::FxHasher` v2; pre-XORing prevents `0 -> 0` and populates unset high UMI bits.
+        // `0x9e37_79b9_7f4a_7c15`: 64-bit golden ratio constant `floor(2^64 / phi)` (Knuth /
+        // Fibonacci hashing) used as the odd 128-bit widening multiplier.
         let full =
             u128::from(self.0 ^ 0xf135_7aea_2e62_a9c5).wrapping_mul(0x9e37_79b9_7f4a_7c15_u128);
         (full as u64) ^ ((full >> 64) as u64)
