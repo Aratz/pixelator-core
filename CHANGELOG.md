@@ -21,6 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- UMI keys are now mixed before hashing to prevent UMI bias increase hash collision likelihood.
 - Release the Python GIL during native execution in Python bindings.
 
 ## [0.2.0] - 2026-09-14

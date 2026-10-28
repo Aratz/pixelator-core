@@ -1,10 +1,61 @@
-use rustc_hash::FxHashMap as HashMap;
+use std::hash::{BuildHasherDefault, Hasher};
 
 use crate::common::types::{Edge, EdgeWeight, NodeIdx, UMI, UMIPair};
 
+/// Hasher for single-integer UMI keys using a 128-bit widening multiply-xor (`wymix`).
+///
+/// `FxHasher` only spreads keys well for tables up to 2^26 buckets; for larger tables part of the
+/// bucket index comes straight from the key's lowest bits, so biased UMIs pile up in part of the
+/// table and probe sequences get very long.
+///
+/// Pre-XORing with a 64-bit constant activates all 64 bits regardless of UMI length (1..=32 bases),
+/// and XORing the low and high halves of the 64x64 -> 128-bit product lets every UMI bit affect
+/// every output bit (both low/high bucket index bits and `hashbrown`'s top-7 `h2` tag bits) in a
+/// single hardware multiply instruction.
+#[derive(Default)]
+struct UmiHasher(u64);
+
+impl Hasher for UmiHasher {
+    #[inline]
+    fn write(&mut self, bytes: &[u8]) {
+        let mut h = self.0;
+        for &b in bytes {
+            h = h.rotate_left(8) ^ u64::from(b);
+        }
+        self.0 = h;
+    }
+
+    #[inline]
+    fn write_u64(&mut self, i: u64) {
+        self.0 = i;
+    }
+
+    #[inline]
+    fn write_usize(&mut self, i: usize) {
+        self.0 = i as u64;
+    }
+
+    #[inline]
+    fn finish(&self) -> u64 {
+        // `0xf135_7aea_2e62_a9c5`: 64-bit MCG multiplier from Steele & Vigna (2021), also used by
+        // `rustc_hash::FxHasher` v2; pre-XORing prevents `0 -> 0` and populates unset high UMI bits.
+        // `0x9e37_79b9_7f4a_7c15`: 64-bit golden ratio constant `floor(2^64 / phi)` (Knuth /
+        // Fibonacci hashing) used as the odd 128-bit widening multiplier.
+        let full =
+            u128::from(self.0 ^ 0xf135_7aea_2e62_a9c5).wrapping_mul(0x9e37_79b9_7f4a_7c15_u128);
+        (full as u64) ^ ((full >> 64) as u64)
+    }
+}
+
+type UmiBuildHasher = BuildHasherDefault<UmiHasher>;
+
+// The std map is only used with `UmiBuildHasher`, never with the default SipHash.
+#[allow(clippy::disallowed_types)]
+type UmiHashMap<V> = std::collections::HashMap<UMI, V, UmiBuildHasher>;
+
 pub struct UmiToNodeIndexMapping {
     node_idx_to_umi: Vec<NodeIdx>,
-    umi_to_node_idx: HashMap<UMI, NodeIdx>,
+    umi_to_node_idx: UmiHashMap<NodeIdx>,
 }
 
 impl UmiToNodeIndexMapping {
@@ -12,7 +63,10 @@ impl UmiToNodeIndexMapping {
     pub fn with_capacity(node_capacity: usize) -> Self {
         Self {
             node_idx_to_umi: Vec::with_capacity(node_capacity),
-            umi_to_node_idx: HashMap::with_capacity_and_hasher(node_capacity, Default::default()),
+            umi_to_node_idx: UmiHashMap::with_capacity_and_hasher(
+                node_capacity,
+                Default::default(),
+            ),
         }
     }
 
@@ -148,6 +202,36 @@ mod tests {
             }),
             umis[2]
         );
+    }
+
+    #[test]
+    fn test_umi_hash_spreads_high_bucket_bits_for_biased_low_bits() {
+        use std::hash::BuildHasher;
+
+        // Every key has the same lowest 4 bits (the same first two nucleotides). For a table
+        // with 2^30 buckets, bucket-index bits 26..30 must still take every value.
+        let hasher = UmiBuildHasher::default();
+        let high_bucket_bits: rustc_hash::FxHashSet<u64> = (0..10_000usize)
+            .map(|i| (hasher.hash_one((i << 4) | 0b0101) >> 26) & 0xF)
+            .collect();
+
+        assert_eq!(high_bucket_bits.len(), 16);
+
+        // When only high UMI bits (bases 21..=28, bits 40..56) vary, low bucket bits, high
+        // bucket bits (26..34), and hashbrown's top-7 control tag bits (57..64) must all spread.
+        let low_bucket_bits: rustc_hash::FxHashSet<u64> = (0..10_000usize)
+            .map(|i| hasher.hash_one(((i & 0xFFFF) << 40) | 0x0012_3456_789A) & 0xFF)
+            .collect();
+        let high_bucket_bits_wide: rustc_hash::FxHashSet<u64> = (0..10_000usize)
+            .map(|i| (hasher.hash_one(((i & 0xFFFF) << 40) | 0x0012_3456_789A) >> 26) & 0xFF)
+            .collect();
+        let h2_tag_bits: rustc_hash::FxHashSet<u64> = (0..10_000usize)
+            .map(|i| hasher.hash_one(((i & 0xFFFF) << 40) | 0x0012_3456_789A) >> 57)
+            .collect();
+
+        assert_eq!(low_bucket_bits.len(), 256);
+        assert_eq!(high_bucket_bits_wide.len(), 256);
+        assert_eq!(h2_tag_bits.len(), 128);
     }
 
     #[test]
