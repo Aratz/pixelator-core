@@ -62,10 +62,15 @@ mod pixelator_core_py {
 
 fn detach_io<T: Send>(
     py: Python<'_>,
-    f: impl FnOnce() -> Result<T, Box<dyn std::error::Error + Send + Sync>> + pyo3::marker::Ungil,
+    f: impl FnOnce() -> Result<T, Box<dyn std::error::Error + Send + Sync>> + Send,
 ) -> PyResult<T> {
-    py.detach(f)
-        .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{:?}", e)))
+    py.detach(|| {
+        debug!("Entering detached Rust execution");
+        let res = f();
+        debug!("Exiting detached Rust execution");
+        res
+    })
+    .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{:?}", e)))
 }
 
 ///
@@ -86,17 +91,17 @@ pub fn find_graph_statistics(
     py: Python<'_>,
     parquet_file: &str,
 ) -> PyResult<(usize, usize, usize, f64)> {
-    let graph_properties = py.detach(|| {
+    detach_io(py, || {
         let (_, graph) = create_graph_and_umi_mapping_from_parquet_file::<u8>(parquet_file);
-        GraphProperties::new(&graph)
-    });
+        let graph_properties = GraphProperties::new(&graph);
 
-    Ok((
-        graph_properties.node_count,
-        graph_properties.edge_weight_sum,
-        graph_properties.n_connected_components,
-        graph_properties.fraction_in_largest_component,
-    ))
+        Ok((
+            graph_properties.node_count,
+            graph_properties.edge_weight_sum,
+            graph_properties.n_connected_components,
+            graph_properties.fraction_in_largest_component,
+        ))
+    })
 }
 
 /// Generate a Python equivalent of a Rust dataclass, including a `from` method to convert between

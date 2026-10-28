@@ -198,12 +198,12 @@ def test_run_hybrid_community_detection(
 class _GilCheckHandler(logging.Handler):
     """Logging handler invoked by pyo3-log from inside the Rust extension."""
 
-    def __init__(self, on_emit: Callable[[], None]) -> None:
+    def __init__(self, on_emit: Callable[[logging.LogRecord], None]) -> None:
         super().__init__(level=logging.DEBUG)
         self._on_emit = on_emit
 
     def emit(self, record: logging.LogRecord) -> None:
-        self._on_emit()
+        self._on_emit(record)
 
 
 @pytest.mark.parametrize(
@@ -263,29 +263,29 @@ def test_pyfunctions_release_gil_during_rust_execution(
 ) -> None:
     """Verify each binding detaches from the GIL while executing pure-Rust steps.
 
-    Inside `py.detach(...)`, `pyo3-log` temporarily re-acquires the GIL to forward
-    a Rust `log` record to Python's `logging` module and then releases the GIL
-    again as soon as `Handler.emit` returns.
+    Inside `detach_io`, `py.detach(...)` emits `"Entering detached Rust execution"`
+    before running the pure-Rust closure and `"Exiting detached Rust execution"`
+    before returning. `pyo3-log` temporarily re-acquires the GIL to forward each
+    `debug!` record to Python's `logging` module and releases the GIL again as
+    soon as `Handler.emit` returns.
 
-    On the first Rust log record (`"Creating UMI mapping and graph edges..."`
-    emitted before parquet reading & algorithm execution), we signal a pre-started
-    background Python thread so it contends for the GIL while the main thread is
-    mid-computation in Rust, and then sets an event. On the next Rust log record
-    (`"Creating graph..."` emitted after the parquet file has been read into
-    triplets), we assert that the background thread has already run while the main
-    thread was executing pure-Rust code between the two log calls.
+    On `"Entering detached Rust execution"`, we signal a pre-started background
+    Python thread so it contends for the GIL while the main thread is executing
+    pure-Rust code, and on `"Exiting detached Rust execution"`, we assert that
+    the background thread has already run.
     """
     worker_ran_between_logs = threading.Event()
     worker_ready = threading.Event()
     first_emit_returned = threading.Event()
-    worker_ran_before_second_log = False
-    emitted_records = 0
+    worker_ran_before_exit_log = False
+    saw_enter_log = False
+    saw_exit_log = False
 
     def background_worker() -> None:
         worker_ready.set()
-        # Wait until the first logging handler call is about to return so that we
-        # contend for the GIL while the main thread is inside pure-Rust code
-        # between the first and second Rust log statements.
+        # Wait until the entering-detach logging handler call is about to return
+        # so that we contend for the GIL while the main thread is inside pure-Rust
+        # code between the entering and exiting `detach_io` debug logs.
         first_emit_returned.wait(timeout=5.0)
         worker_ran_between_logs.set()
 
@@ -293,33 +293,37 @@ def test_pyfunctions_release_gil_during_rust_execution(
     worker.start()
     worker_ready.wait(timeout=5.0)
 
-    def on_rust_log() -> None:
-        nonlocal emitted_records, worker_ran_before_second_log
-        emitted_records += 1
-        if emitted_records == 1:
+    def on_rust_log(record: logging.LogRecord) -> None:
+        nonlocal saw_enter_log, saw_exit_log, worker_ran_before_exit_log
+        msg = record.getMessage()
+        if msg == "Entering detached Rust execution":
+            saw_enter_log = True
             first_emit_returned.set()
-        elif emitted_records == 2:
+        elif msg == "Exiting detached Rust execution":
+            saw_exit_log = True
             # Inside `on_rust_log` the main thread holds the GIL (acquired by
-            # `pyo3-log` for record #2). If the outer `#[pyfunction]` did not
-            # release the GIL via `py.detach(...)`, the GIL was never released
-            # when record #1 returned, so `worker_ran_between_logs` could never
-            # be set before record #2 arrives.
-            worker_ran_before_second_log = worker_ran_between_logs.is_set()
+            # `pyo3-log` for the exit log). If `detach_io` did not release the
+            # GIL via `py.detach(...)`, the GIL was never released when the
+            # enter log returned, so `worker_ran_between_logs` could never be
+            # set before the exit log arrives.
+            worker_ran_before_exit_log = worker_ran_between_logs.is_set()
 
-    root_logger = logging.getLogger()
-    prev_level = root_logger.level
+    logger = logging.getLogger("pixelator_core_py")
+    prev_level = logger.level
     handler = _GilCheckHandler(on_rust_log)
-    root_logger.setLevel(logging.DEBUG)
-    root_logger.addHandler(handler)
+    logger.setLevel(logging.DEBUG)
+    logger.addHandler(handler)
     try:
         invoke(gil_check_parquet_path, tmp_path)
     finally:
         first_emit_returned.set()
         worker.join(timeout=5.0)
-        root_logger.removeHandler(handler)
-        root_logger.setLevel(prev_level)
+        logger.removeHandler(handler)
+        logger.setLevel(prev_level)
 
-    assert emitted_records >= 2, f"{name} emitted fewer than 2 Rust log records"
-    assert worker_ran_before_second_log, (
+    assert saw_enter_log and saw_exit_log, (
+        f"{name} did not emit detach_io boundary log records"
+    )
+    assert worker_ran_before_exit_log, (
         f"background Python thread was starved of the GIL during {name}"
     )
