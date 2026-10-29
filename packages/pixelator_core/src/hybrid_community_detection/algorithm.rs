@@ -138,6 +138,20 @@ mod tests {
     }
 
     #[test]
+    fn test_hybrid_community_detection_empty_graph() {
+        let graph = Graph::<u8>::from_edges(edges_from_tuples(vec![]), 0);
+        let quality = Modularity::new(0.5, graph.get_total_edge_weight());
+
+        let (result_partition, _, stats) =
+            hybrid_community_detection(graph, quality, 0.1, None, Some(100), 1, false, true);
+
+        assert!(result_partition.get_node_to_partition_map().is_empty());
+        assert!(stats.partition_node_counts.is_empty());
+        // Debug output is only built when debug logging is on; make sure it doesn't panic.
+        let _ = format!("{:?}", stats);
+    }
+
+    #[test]
     fn test_hybrid_community_detection_disconnected_graph() {
         //    2      5
         //   / \    / \

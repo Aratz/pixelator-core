@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+## [1.0.2] - 2026-10-29
+
+### Changed
+
+- `graph_collapse` takes a string `component` column, sorted by component.
+- `graph_collapse` returns only `original` and `corrected` columns.
+
+### Fixed
+
+- Debug messages in community detection don't panic on empty graphs
+
 ## [1.0.1] - 2026-10-29
 
 ### Removed
@@ -84,7 +95,8 @@ Initial release: Rust implementation of performance-critical community-detection
   - `run_label_propagation`, `run_leiden`, `run_hybrid_community_detection`, `find_graph_statistics`, and `GraphProperties`-style results for hybrid workflows.
   - Module `__version__` aligned with the Rust crate version.
 
-[Unreleased]: https://github.com/PixelgenTechnologies/pixelator-core/compare/v1.0.1...HEAD
+[Unreleased]: https://github.com/PixelgenTechnologies/pixelator-core/compare/v1.0.2...HEAD
+[1.0.2]: https://github.com/PixelgenTechnologies/pixelator-core/compare/v1.0.1...v1.0.2
 [1.0.1]: https://github.com/PixelgenTechnologies/pixelator-core/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/PixelgenTechnologies/pixelator-core/compare/v0.2.0...v1.0.0
 [0.2.0]: https://github.com/PixelgenTechnologies/pixelator-core/compare/v0.1.1...v0.2.0
