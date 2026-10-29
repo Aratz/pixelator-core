@@ -47,6 +47,9 @@ def test_public_api() -> None:
         "run_label_propagation",
         "run_leiden",
         "run_hybrid_community_detection",
+        "run_edgelist",
+        "encode_dna_2bit",
+        "decode_dna_2bit",
         "PyGraphProperties",
         "__version__",
     ):
@@ -327,3 +330,20 @@ def test_pyfunctions_release_gil_during_rust_execution(
     assert worker_ran_before_exit_log, (
         f"background Python thread was starved of the GIL during {name}"
     )
+
+
+def test_encode_decode_dna_2bit() -> None:
+    sequences = ["", "A", "ACGT", "ACGTACGTACGTACGTACGTACGTACGTACGT"]
+    for seq in sequences:
+        encoded = pixelator_core.encode_dna_2bit(seq)
+        assert pixelator_core.decode_dna_2bit(encoded, len(seq)) == seq
+
+
+def test_encode_dna_2bit_rejects_invalid_bases() -> None:
+    with pytest.raises(ValueError):
+        pixelator_core.encode_dna_2bit("AN")
+
+
+def test_decode_dna_2bit_rejects_length_beyond_u64() -> None:
+    with pytest.raises(ValueError):
+        pixelator_core.decode_dna_2bit(0, 33)
