@@ -56,7 +56,7 @@ impl fmt::Debug for PartitionedGraphStatistics {
                 "partition_node_counts",
                 &format!(
                     "[{:?},...; {}]",
-                    &sorted_partition_sizes[0..5],
+                    &sorted_partition_sizes[..sorted_partition_sizes.len().min(5)],
                     sorted_partition_sizes.len()
                 ),
             )
