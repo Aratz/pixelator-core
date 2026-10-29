@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+## [1.0.0] - 2026-10-29
+
 ### Added
 
 - Edgelist binding
@@ -75,6 +77,8 @@ Initial release: Rust implementation of performance-critical community-detection
   - `run_label_propagation`, `run_leiden`, `run_hybrid_community_detection`, `find_graph_statistics`, and `GraphProperties`-style results for hybrid workflows.
   - Module `__version__` aligned with the Rust crate version.
 
-[Unreleased]: https://github.com/PixelgenTechnologies/pixelator-core/compare/v0.1.1...HEAD
-[0.1.0]: https://github.com/PixelgenTechnologies/pixelator-core/releases/tag/v0.1.1
+[Unreleased]: https://github.com/PixelgenTechnologies/pixelator-core/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/PixelgenTechnologies/pixelator-core/compare/v0.2.0...v1.0.0
+[0.2.0]: https://github.com/PixelgenTechnologies/pixelator-core/compare/v0.1.1...v0.2.0
+[0.1.1]: https://github.com/PixelgenTechnologies/pixelator-core/releases/tag/v0.1.1
 [0.1.0]: https://github.com/PixelgenTechnologies/pixelator-core/releases/tag/v0.1.0
