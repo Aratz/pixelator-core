@@ -15,7 +15,7 @@ use parquet::file::properties::WriterProperties;
 use crate::common::graph::Graph;
 use crate::common::node_indexing::UmiToNodeIndexMapping;
 use crate::common::node_partitioning::NodePartitioning;
-use crate::common::types::{EdgeWeight, UMI, UMIPair};
+use crate::common::types::{EdgeWeight, NodeIdx, UMI, UMIPair};
 
 /// An iterator that yields UMI pairs from a parquet file one by one.
 /// These can be mapped to node indices and used to construct a graph.
@@ -35,7 +35,7 @@ pub struct ParquetUMIPairIter {
 }
 
 impl ParquetUMIPairIter {
-    pub fn new<P: AsRef<Path>>(path: P) -> Result<Self, Box<dyn std::error::Error>> {
+    pub fn new<P: AsRef<Path>>(path: P) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         let file = File::open(path)?;
 
         let builder = ParquetRecordBatchReaderBuilder::try_new(file)?;
@@ -115,7 +115,7 @@ pub fn write_record_batches_to_path<P: AsRef<Path>, I>(
     schema: SchemaRef,
     record_batches: I,
     properties: Option<WriterProperties>,
-) -> Result<(), Box<dyn std::error::Error>>
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
 where
     I: Iterator<Item = RecordBatch>,
 {
@@ -143,7 +143,7 @@ pub fn filter_out_crossing_edges_from_edge_list<PIn: AsRef<Path>, POut: AsRef<Pa
     output_path: &POut,
     node_partitioning: &T,
     mapping: &UmiToNodeIndexMapping,
-) -> Result<(), Box<dyn std::error::Error>>
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
 where
     T: NodePartitioning,
 {
@@ -222,7 +222,7 @@ pub fn write_node_partitions_to_parquet<P: AsRef<Path>, T>(
     node_partitioning: &T,
     mapping: &UmiToNodeIndexMapping,
     batch_size: Option<usize>,
-) -> Result<(), Box<dyn std::error::Error>>
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
 where
     T: NodePartitioning,
 {
@@ -265,18 +265,24 @@ pub fn create_graph_and_umi_mapping_from_parquet_file<T>(
 where
     T: EdgeWeight,
 {
-    info!("Creating UMI mapping...");
-    let umi_mapping = UmiToNodeIndexMapping::from_umi_pairs(
-        ParquetUMIPairIter::new(parquet_file).expect("Failed to create ParquetUMIPairIter"),
-    );
+    info!("Creating UMI mapping and graph edges...");
+    let pairs = ParquetUMIPairIter::new(parquet_file).expect("Failed to create ParquetUMIPairIter");
+    // Mean degree about 3, so the node count is near 2E/3.
+    let num_pairs = pairs.size_hint().0;
+    let mut umi_mapping = UmiToNodeIndexMapping::with_capacity(num_pairs.saturating_mul(2) / 3);
+    let triplets: Vec<(NodeIdx, NodeIdx, T)> = pairs
+        .map(|(src, dest)| {
+            let (src, dest) = (
+                umi_mapping.get_or_insert(src),
+                umi_mapping.get_or_insert(dest),
+            );
+            (src.min(dest), src.max(dest), T::one())
+        })
+        .collect();
 
     let num_nodes = umi_mapping.get_num_of_nodes();
-    let edges = umi_mapping.map_umi_pair_iterator_to_edge(
-        ParquetUMIPairIter::new(parquet_file).expect("Failed to create ParquetUMIPairIter"),
-    );
-
     info!("Creating graph...");
-    let graph = Graph::<T>::from_edges(edges, num_nodes);
+    let graph = Graph::<T>::from_undirected_triplets(triplets, num_nodes);
     info!(
         "Graph created with {} nodes, {} edge entries, total edge weight {}",
         graph.get_num_nodes(),

@@ -5,6 +5,27 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+## [1.0.0] - 2026-10-29
+
+### Added
+
+- Edgelist binding
+- Graph collapse binding
+- Optional Parquet of reads dropped while building an edgelist.
+
+### Changed
+
+- Faster, lower-memory label propagation, connected components, and graph statistics on large graphs.
+- Building a graph from a parquet edge list reads the file only once.
+- Leiden is faster and uses less peak memory on large graphs.
+
+### Fixed
+
+- UMI keys are now mixed before hashing to prevent UMI bias increase hash collision likelihood.
+- Release the Python GIL during native execution in Python bindings.
+
 ## [0.2.0] - 2026-09-14
 
 ### Added
@@ -53,6 +74,8 @@ Initial release: Rust implementation of performance-critical community-detection
   - `run_label_propagation`, `run_leiden`, `run_hybrid_community_detection`, `find_graph_statistics`, and `GraphProperties`-style results for hybrid workflows.
   - Module `__version__` aligned with the Rust crate version.
 
-[Unreleased]: https://github.com/PixelgenTechnologies/pixelator-core/compare/v0.1.1...HEAD
-[0.1.0]: https://github.com/PixelgenTechnologies/pixelator-core/releases/tag/v0.1.1
+[Unreleased]: https://github.com/PixelgenTechnologies/pixelator-core/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/PixelgenTechnologies/pixelator-core/compare/v0.2.0...v1.0.0
+[0.2.0]: https://github.com/PixelgenTechnologies/pixelator-core/compare/v0.1.1...v0.2.0
+[0.1.1]: https://github.com/PixelgenTechnologies/pixelator-core/releases/tag/v0.1.1
 [0.1.0]: https://github.com/PixelgenTechnologies/pixelator-core/releases/tag/v0.1.0

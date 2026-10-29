@@ -1,43 +1,101 @@
-use std::collections::hash_map::Entry;
-
-use rustc_hash::FxHashMap as HashMap;
+use std::hash::{BuildHasherDefault, Hasher};
 
 use crate::common::types::{Edge, EdgeWeight, NodeIdx, UMI, UMIPair};
 
+/// Hasher for single-integer UMI keys using a 128-bit widening multiply-xor (`wymix`).
+///
+/// `FxHasher` only spreads keys well for tables up to 2^26 buckets; for larger tables part of the
+/// bucket index comes straight from the key's lowest bits, so biased UMIs pile up in part of the
+/// table and probe sequences get very long.
+///
+/// Pre-XORing with a 64-bit constant activates all 64 bits regardless of UMI length (1..=32 bases),
+/// and XORing the low and high halves of the 64x64 -> 128-bit product lets every UMI bit affect
+/// every output bit (both low/high bucket index bits and `hashbrown`'s top-7 `h2` tag bits) in a
+/// single hardware multiply instruction.
+#[derive(Default)]
+struct UmiHasher(u64);
+
+impl Hasher for UmiHasher {
+    #[inline]
+    fn write(&mut self, bytes: &[u8]) {
+        let mut h = self.0;
+        for &b in bytes {
+            h = h.rotate_left(8) ^ u64::from(b);
+        }
+        self.0 = h;
+    }
+
+    #[inline]
+    fn write_u64(&mut self, i: u64) {
+        self.0 = i;
+    }
+
+    #[inline]
+    fn write_usize(&mut self, i: usize) {
+        self.0 = i as u64;
+    }
+
+    #[inline]
+    fn finish(&self) -> u64 {
+        // `0xf135_7aea_2e62_a9c5`: 64-bit MCG multiplier from Steele & Vigna (2021), also used by
+        // `rustc_hash::FxHasher` v2; pre-XORing prevents `0 -> 0` and populates unset high UMI bits.
+        // `0x9e37_79b9_7f4a_7c15`: 64-bit golden ratio constant `floor(2^64 / phi)` (Knuth /
+        // Fibonacci hashing) used as the odd 128-bit widening multiplier.
+        let full =
+            u128::from(self.0 ^ 0xf135_7aea_2e62_a9c5).wrapping_mul(0x9e37_79b9_7f4a_7c15_u128);
+        (full as u64) ^ ((full >> 64) as u64)
+    }
+}
+
+type UmiBuildHasher = BuildHasherDefault<UmiHasher>;
+
+// The std map is only used with `UmiBuildHasher`, never with the default SipHash.
+#[allow(clippy::disallowed_types)]
+type UmiHashMap<V> = std::collections::HashMap<UMI, V, UmiBuildHasher>;
+
 pub struct UmiToNodeIndexMapping {
     node_idx_to_umi: Vec<NodeIdx>,
-    umi_to_node_idx: HashMap<UMI, NodeIdx>,
+    umi_to_node_idx: UmiHashMap<NodeIdx>,
 }
 
 impl UmiToNodeIndexMapping {
+    /// Reserve room for about `node_capacity` nodes.
+    pub fn with_capacity(node_capacity: usize) -> Self {
+        Self {
+            node_idx_to_umi: Vec::with_capacity(node_capacity),
+            umi_to_node_idx: UmiHashMap::with_capacity_and_hasher(
+                node_capacity,
+                Default::default(),
+            ),
+        }
+    }
+
+    /// Return the node index for `umi`, assigning the next index if it is new.
+    pub fn get_or_insert(&mut self, umi: UMI) -> NodeIdx {
+        if let Some(&idx) = self.umi_to_node_idx.get(&umi) {
+            return idx;
+        }
+        let idx = self.node_idx_to_umi.len();
+        self.umi_to_node_idx.insert(umi, idx);
+        self.node_idx_to_umi.push(umi);
+        idx
+    }
+
     pub fn from_umi_pairs<I>(umi_pairs: I) -> Self
     where
         I: IntoIterator<Item = UMIPair>,
     {
         let umi_pairs = umi_pairs.into_iter();
-        // We can make a guess about the number of unique UMIs based on the
-        // number of pairs to improve performance when allocating
+        // Guess the number of unique UMIs from the number of pairs.
         let unique_umi_ratio_guess = umi_pairs.size_hint().0 / 5;
-        let mut node_idx_to_umi: Vec<NodeIdx> = Vec::with_capacity(unique_umi_ratio_guess);
-        let mut umi_to_node_idx: HashMap<UMI, NodeIdx> =
-            HashMap::with_capacity_and_hasher(unique_umi_ratio_guess, Default::default());
+        let mut mapping = Self::with_capacity(unique_umi_ratio_guess);
 
         for (src, dest) in umi_pairs {
-            if let Entry::Vacant(e) = umi_to_node_idx.entry(src) {
-                e.insert(node_idx_to_umi.len());
-                node_idx_to_umi.push(src);
-            }
-
-            if let Entry::Vacant(e) = umi_to_node_idx.entry(dest) {
-                e.insert(node_idx_to_umi.len());
-                node_idx_to_umi.push(dest);
-            }
+            mapping.get_or_insert(src);
+            mapping.get_or_insert(dest);
         }
 
-        Self {
-            node_idx_to_umi,
-            umi_to_node_idx,
-        }
+        mapping
     }
 
     pub fn map_node_index_to_umi(&self, node_index: NodeIdx) -> UMI {
@@ -144,5 +202,102 @@ mod tests {
             }),
             umis[2]
         );
+    }
+
+    #[test]
+    fn test_umi_hash_spreads_high_bucket_bits_for_biased_low_bits() {
+        use std::hash::BuildHasher;
+
+        // Every key has the same lowest 4 bits (the same first two nucleotides). For a table
+        // with 2^30 buckets, bucket-index bits 26..30 must still take every value.
+        let hasher = UmiBuildHasher::default();
+        let high_bucket_bits: rustc_hash::FxHashSet<u64> = (0..10_000usize)
+            .map(|i| (hasher.hash_one((i << 4) | 0b0101) >> 26) & 0xF)
+            .collect();
+
+        assert_eq!(high_bucket_bits.len(), 16);
+
+        // When only high UMI bits (bases 21..=28, bits 40..56) vary, low bucket bits, high
+        // bucket bits (26..34), and hashbrown's top-7 control tag bits (57..64) must all spread.
+        let low_bucket_bits: rustc_hash::FxHashSet<u64> = (0..10_000usize)
+            .map(|i| hasher.hash_one(((i & 0xFFFF) << 40) | 0x0012_3456_789A) & 0xFF)
+            .collect();
+        let high_bucket_bits_wide: rustc_hash::FxHashSet<u64> = (0..10_000usize)
+            .map(|i| (hasher.hash_one(((i & 0xFFFF) << 40) | 0x0012_3456_789A) >> 26) & 0xFF)
+            .collect();
+        let h2_tag_bits: rustc_hash::FxHashSet<u64> = (0..10_000usize)
+            .map(|i| hasher.hash_one(((i & 0xFFFF) << 40) | 0x0012_3456_789A) >> 57)
+            .collect();
+
+        assert_eq!(low_bucket_bits.len(), 256);
+        assert_eq!(high_bucket_bits_wide.len(), 256);
+        assert_eq!(h2_tag_bits.len(), 128);
+    }
+
+    #[test]
+    fn test_incremental_insert_matches_from_edges() {
+        use crate::common::graph::Graph;
+
+        // Includes a duplicate pair and the same pair reversed, which must sum.
+        let pairs = [
+            (11usize, 22),
+            (22, 33),
+            (33, 11),
+            (11, 22),
+            (50, 11),
+            (22, 11),
+        ];
+        let two_pass = UmiToNodeIndexMapping::from_umi_pairs(pairs.iter().copied());
+        let mut one_pass = UmiToNodeIndexMapping::with_capacity(pairs.len());
+        let triplets: Vec<(NodeIdx, NodeIdx, u8)> = pairs
+            .iter()
+            .copied()
+            .map(|(src, dest)| {
+                let (src, dest) = (one_pass.get_or_insert(src), one_pass.get_or_insert(dest));
+                (src.min(dest), src.max(dest), 1)
+            })
+            .collect();
+
+        assert_eq!(two_pass.get_num_of_nodes(), one_pass.get_num_of_nodes());
+        for &(src, dest) in &pairs {
+            assert_eq!(
+                two_pass.map_umi_to_node_index(src),
+                one_pass.map_umi_to_node_index(src)
+            );
+            assert_eq!(
+                two_pass.map_umi_to_node_index(dest),
+                one_pass.map_umi_to_node_index(dest)
+            );
+        }
+
+        let graph_two = Graph::<u8>::from_edges(
+            two_pass.map_umi_pair_iterator_to_edge(pairs.iter().copied()),
+            two_pass.get_num_of_nodes(),
+        );
+        let graph_one =
+            Graph::<u8>::from_undirected_triplets(triplets, one_pass.get_num_of_nodes());
+
+        assert_eq!(graph_one.get_num_nodes(), graph_two.get_num_nodes());
+        assert_eq!(
+            graph_one.get_edge_entry_count(),
+            graph_two.get_edge_entry_count()
+        );
+        assert_eq!(
+            graph_one.get_total_edge_weight(),
+            graph_two.get_total_edge_weight()
+        );
+        for node in 0..graph_one.get_num_nodes() {
+            let mut from_one: Vec<_> = graph_one
+                .edges_from_iter(node)
+                .map(|edge| (edge.dest, edge.weight))
+                .collect();
+            let mut from_two: Vec<_> = graph_two
+                .edges_from_iter(node)
+                .map(|edge| (edge.dest, edge.weight))
+                .collect();
+            from_one.sort_unstable();
+            from_two.sort_unstable();
+            assert_eq!(from_one, from_two);
+        }
     }
 }
