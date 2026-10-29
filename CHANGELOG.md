@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+### Changed
+
+- `graph_collapse` takes a string `component` column, sorted by component.
+- `graph_collapse` returns only `original` and `corrected` columns.
+
 ### Fixed
 
 - Debug messages in community detection don't panic on with empty graphs
