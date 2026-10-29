@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+### Removed
+
+- Python 3.10 support.
+
+### Fixed
+
+- Windows wheels failed to build, so 1.0.0 shipped without wheels.
+
 ## [1.0.0] - 2026-10-29
 
 ### Added
