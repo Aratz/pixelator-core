@@ -1,4 +1,4 @@
-//! Extension entry point. Bindings live in [`graph`] and [`edgelist`]; this
+//! Extension entry point. Bindings live in [`graph`], [`graph_collapse`] and [`edgelist`]; this
 //! module only installs the allocator and registers the public names.
 
 use pyo3::prelude::*;
@@ -6,6 +6,7 @@ use pyo3::prelude::*;
 mod convert;
 mod edgelist;
 mod graph;
+mod graph_collapse;
 
 // MiMalloc backs every Rust allocation in this extension, including the
 // statically linked `pixelator-core` code, so the hot edgelist path keeps its
@@ -40,6 +41,9 @@ mod pixelator_core_py {
 
     #[pymodule_export]
     use super::graph::PyGraphProperties;
+
+    #[pymodule_export]
+    use super::graph_collapse::py_graph_collapse;
 
     #[pymodule_export]
     use super::edgelist::run_edgelist;

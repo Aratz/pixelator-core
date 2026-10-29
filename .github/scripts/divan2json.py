@@ -33,6 +33,14 @@ BENCH_LINE = re.compile(
     r"(\d+(?:\.\d+)?\s+\S+)\s*│\s*"
     r"(\d+(?:\.\d+)?\s+\S+)"
 )
+# A tree row names a node: `├─ name` or `╰─ name`, indented three characters
+# per level. Rows with a timing column are benchmarks; the rest are headers.
+TREE_NODE = re.compile(r"^([│ ]*[├╰]─ )(\w+)")
+# Tree levels: root (0) > module (1) > benchmark function (2) > argument (3).
+# Divan prints an `args = [...]` benchmark as a header row for the function
+# with one timed row per argument, so those rows are named after the function.
+# This assumes benchmark modules are not nested.
+FUNCTION_DEPTH = 2
 BYTE_VALUE = re.compile(
     r"(\d+(?:\.\d+)?)\s+(B|KiB|MiB|GiB|TiB|KB|MB|GB|TB)\b"
 )
@@ -51,11 +59,20 @@ def parse(text: str) -> list[dict]:
     results = []
     lines = text.splitlines()
     current_name = None
+    # Most recent node name at each tree depth.
+    node_at_depth: dict[int, str] = {}
 
     for i, line in enumerate(lines):
+        node = TREE_NODE.match(line)
+        if node:
+            depth = len(node.group(1)) // 3
+            node_at_depth[depth] = node.group(2)
+
         match = BENCH_LINE.search(line)
         if match:
             current_name = match.group(1)
+            if node and depth > FUNCTION_DEPTH:
+                current_name = f"{node_at_depth[FUNCTION_DEPTH]}/{current_name}"
             if not current_name.startswith("mem_"):
                 results.append(
                     {
