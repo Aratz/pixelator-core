@@ -2,7 +2,6 @@
 
 import pixelator_core
 import pyarrow as pa
-import pytest
 
 
 def _umi(seq):
@@ -12,14 +11,14 @@ def _umi(seq):
 def _reader(rows):
     """A record-batch reader with one batch per group of rows.
 
-    Each group is `(umi1, umi2, component)` tuples, with an integer component
-    id. Groups become separate batches so a component can cross a batch boundary.
+    Each group is `(umi1, umi2, component)` tuples. Groups become separate
+    batches so a component can cross a batch boundary.
     """
     schema = pa.schema(
         [
             ("umi1", pa.uint64()),
             ("umi2", pa.uint64()),
-            ("component", pa.uint32()),
+            ("component", pa.string()),
         ]
     )
     batches = [
@@ -27,7 +26,7 @@ def _reader(rows):
             {
                 "umi1": pa.array([row[0] for row in group], type=pa.uint64()),
                 "umi2": pa.array([row[1] for row in group], type=pa.uint64()),
-                "component": pa.array([row[2] for row in group], type=pa.uint32()),
+                "component": pa.array([row[2] for row in group], type=pa.string()),
             },
             schema=schema,
         )
@@ -61,11 +60,11 @@ def test_chain_collapses_within_its_component_only():
     umi_n = _umi("TTTT")
     reader = _reader(
         [
-            [(umi_m, umi_h, 0), (umi_m, umi_a, 0)],
+            [(umi_m, umi_h, "cell"), (umi_m, umi_a, "cell")],
             [
-                (umi_m, umi_b, 0),
-                (umi_n, umi_h, 0),
-                (_umi("ACAC"), _umi("GTGT"), 1),
+                (umi_m, umi_b, "cell"),
+                (umi_n, umi_h, "cell"),
+                (_umi("ACAC"), _umi("GTGT"), "other"),
             ],
         ]
     )
@@ -74,15 +73,15 @@ def test_chain_collapses_within_its_component_only():
         reader, n_threads=1, bfs_threshold=2, hamming_threshold=1
     )
 
-    assert table.column_names == ["component", "original", "corrected"]
+    assert table.column_names == ["original", "corrected"]
     assert _pairs(table) == {(umi_a, umi_h), (umi_b, umi_h)}
 
 
 def test_stats_count_what_the_search_did():
     """The stats dict covers every component, with the keys the report will use.
 
-    This is the chain from the test above, plus the second component. Component 0
-    has three leaves (CCAA, CAAA and TTTT) and component 1 has two. Only CCAA -> CAAA and
+    This is the chain from the test above, plus the second component. "cell" has
+    three leaves (CCAA, CAAA and TTTT) and "other" has two. Only CCAA -> CAAA and
     CAAA -> AAAA are found, each two hops and one symbol apart.
     """
     umi_m = _umi("GGGG")
@@ -92,11 +91,11 @@ def test_stats_count_what_the_search_did():
     umi_n = _umi("TTTT")
     reader = _reader(
         [
-            [(umi_m, umi_h, 0), (umi_m, umi_a, 0)],
+            [(umi_m, umi_h, "cell"), (umi_m, umi_a, "cell")],
             [
-                (umi_m, umi_b, 0),
-                (umi_n, umi_h, 0),
-                (_umi("ACAC"), _umi("GTGT"), 1),
+                (umi_m, umi_b, "cell"),
+                (umi_n, umi_h, "cell"),
+                (_umi("ACAC"), _umi("GTGT"), "other"),
             ],
         ]
     )
@@ -117,24 +116,24 @@ def test_stats_count_what_the_search_did():
 def test_stats_distributions_are_in_ascending_distance_order():
     """Dict insertion order carries the ordering, so it must be ascending.
 
-    Component 0 is the path AAAA - TTTT - GGGG - CGCG - CAAA - GCGC, where the umi1
+    "far" is the path AAAA - TTTT - GGGG - CGCG - CAAA - GCGC, where the umi1
     ends AAAA and CAAA are four hops and one symbol apart, and AAAA is the only
-    leaf with a match. Component 1 is a star around GGGG with leaves AAAA and CCAA,
-    two hops and two symbols apart, of which one match is kept. Component 0 comes
+    leaf with a match. "near" is a star around GGGG with leaves AAAA and CCAA,
+    two hops and two symbols apart, of which one match is kept. "far" comes
     first, so a tally in arrival order would list distance 4 before 2.
     """
     reader = _reader(
         [
             [
-                (_umi("AAAA"), _umi("TTTT"), 0),
-                (_umi("GGGG"), _umi("TTTT"), 0),
-                (_umi("GGGG"), _umi("CGCG"), 0),
-                (_umi("CAAA"), _umi("CGCG"), 0),
-                (_umi("CAAA"), _umi("GCGC"), 0),
+                (_umi("AAAA"), _umi("TTTT"), "far"),
+                (_umi("GGGG"), _umi("TTTT"), "far"),
+                (_umi("GGGG"), _umi("CGCG"), "far"),
+                (_umi("CAAA"), _umi("CGCG"), "far"),
+                (_umi("CAAA"), _umi("GCGC"), "far"),
             ],
             [
-                (_umi("GGGG"), _umi("AAAA"), 1),
-                (_umi("GGGG"), _umi("CCAA"), 1),
+                (_umi("GGGG"), _umi("AAAA"), "near"),
+                (_umi("GGGG"), _umi("CCAA"), "near"),
             ],
         ]
     )
@@ -161,11 +160,11 @@ def test_max_degree_skips_nodes_above_the_cutoff():
     umi_s = _umi("CAAA")
     rows = [
         [
-            (umi_d, _umi("GGGG"), 0),
-            (umi_d, _umi("TTTT"), 0),
-            (umi_s, _umi("GGGG"), 0),
-            (umi_s, _umi("CCCC"), 0),
-            (umi_s, _umi("ATAT"), 0),
+            (umi_d, _umi("GGGG"), "cell"),
+            (umi_d, _umi("TTTT"), "cell"),
+            (umi_s, _umi("GGGG"), "cell"),
+            (umi_s, _umi("CCCC"), "cell"),
+            (umi_s, _umi("ATAT"), "cell"),
         ]
     ]
 
@@ -194,11 +193,11 @@ def test_row_order_within_a_component_does_not_change_the_result():
     otherwise follow the row order.
     """
     rows = [
-        (_umi("GGGG"), _umi("AAAA"), 0),
-        (_umi("GGGG"), _umi("CAAA"), 0),
-        (_umi("GGGG"), _umi("GAAA"), 0),
-        (_umi("TTTT"), _umi("CAAA"), 0),
-        (_umi("ACAC"), _umi("GAAA"), 0),
+        (_umi("GGGG"), _umi("AAAA"), "cell"),
+        (_umi("GGGG"), _umi("CAAA"), "cell"),
+        (_umi("GGGG"), _umi("GAAA"), "cell"),
+        (_umi("TTTT"), _umi("CAAA"), "cell"),
+        (_umi("ACAC"), _umi("GAAA"), "cell"),
     ]
     orders = [rows, rows[::-1], [rows[i] for i in (2, 0, 4, 1, 3)]]
 
@@ -223,7 +222,7 @@ def test_empty_edgelist_returns_an_empty_table():
     table, stats = pixelator_core.graph_collapse(reader, n_threads=1)
 
     assert table.num_rows == 0
-    assert table.column_names == ["component", "original", "corrected"]
+    assert table.column_names == ["original", "corrected"]
     assert stats == {
         "total_components": 0,
         "nodes_considered": 0,
@@ -231,21 +230,3 @@ def test_empty_edgelist_returns_an_empty_table():
         "bfs_distance_distribution": {},
         "hamming_distance_distribution": {},
     }
-
-
-def test_a_component_column_of_another_type_is_a_value_error():
-    schema = pa.schema(
-        [("umi1", pa.uint64()), ("umi2", pa.uint64()), ("component", pa.string())]
-    )
-    batch = pa.record_batch(
-        {
-            "umi1": pa.array([1], type=pa.uint64()),
-            "umi2": pa.array([2], type=pa.uint64()),
-            "component": pa.array(["a"]),
-        },
-        schema=schema,
-    )
-    reader = pa.RecordBatchReader.from_batches(schema, [batch])
-
-    with pytest.raises(ValueError, match="Column component must be UInt32, got Utf8"):
-        pixelator_core.graph_collapse(reader, n_threads=1)
