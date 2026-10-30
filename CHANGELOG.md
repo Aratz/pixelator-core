@@ -5,6 +5,13 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.3](https://github.com/Aratz/pixelator-core/compare/v1.0.2...v1.0.3) (2026-10-30)
+
+
+### Bug Fixes
+
+* **python:** remove unused imports from the quickstart ([#7](https://github.com/Aratz/pixelator-core/issues/7)) ([edc197b](https://github.com/Aratz/pixelator-core/commit/edc197b2de1ea0d3a1c52447c699f9a18ddc052d))
+
 ## [1.0.2] - 2026-10-29
 
 ### Changed
