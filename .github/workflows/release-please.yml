@@ -3,6 +3,13 @@ name: release-please
 on:
   push:
     branches: [dev]
+  # Manual run (select `dev`), e.g. to regenerate the release PR after a conflict.
+  workflow_dispatch:
+
+# Queue runs instead of racing when a manual run overlaps a push.
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
 
 permissions:
   contents: write
