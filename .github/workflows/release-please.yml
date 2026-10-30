@@ -3,7 +3,7 @@ name: release-please
 on:
   push:
     branches: [dev]
-  # Manual run (select `dev`), e.g. to regenerate the release PR after a conflict.
+  # Manual run, e.g. to regenerate the release PR after a conflict.
   workflow_dispatch:
 
 # Queue runs instead of racing when a manual run overlaps a push.
@@ -18,6 +18,8 @@ permissions:
 jobs:
   release-please:
     name: Update release PR
+    # Manual runs from another branch are skipped.
+    if: github.ref == 'refs/heads/dev'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
