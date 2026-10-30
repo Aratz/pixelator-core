@@ -22,11 +22,15 @@ jobs:
       EVENT_NAME: ${{ github.event_name }}
     steps:
       - uses: actions/checkout@v6
-      # Wheels take their version from Cargo.toml, and PyPI versions cannot be
-      # re-uploaded. release-please only warns if it fails to bump Cargo.toml,
-      # so fail early when Cargo.toml does not match:
-      #   - the manifest, on a release PR;
-      #   - the tag, on a release.
+      # Stop before building if the wheels would get the wrong version.
+      #
+      # Why: the wheel version is read from Cargo.toml, not from the git tag. If
+      # release-please fails to bump Cargo.toml (it only logs a warning), a v1.1.0
+      # release would publish 1.0.2 wheels, and PyPI does not allow re-uploads.
+      #
+      # What: compare the version in Cargo.toml with
+      #   - on a release PR: the version in .release-please-manifest.json
+      #   - on a release: the tag, without the "v" (v1.1.0 -> 1.1.0)
       - name: Check Cargo.toml version
         run: |
           set -euo pipefail
