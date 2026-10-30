@@ -22,11 +22,11 @@ jobs:
       EVENT_NAME: ${{ github.event_name }}
     steps:
       - uses: actions/checkout@v6
-      # The wheel version comes from Cargo.toml, not from the tag, and release-please
-      # skips a failing `extra-files` update with only a warning. PyPI versions cannot
-      # be re-uploaded, so check before building:
-      # - release PR: Cargo.toml must match the version release-please is proposing;
-      # - release: Cargo.toml must match the tag.
+      # Wheels take their version from Cargo.toml, and PyPI versions cannot be
+      # re-uploaded. release-please only warns if it fails to bump Cargo.toml,
+      # so fail early when Cargo.toml does not match:
+      #   - the manifest, on a release PR;
+      #   - the tag, on a release.
       - name: Check Cargo.toml version
         run: |
           set -euo pipefail
