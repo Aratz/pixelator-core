@@ -51,8 +51,6 @@ pip install dist/*.whl
 from pixelator_core import (
     find_graph_statistics,
     run_connected_components,
-    run_label_propagation,
-    run_leiden,
     run_hybrid_community_detection,
 )
 
