@@ -1,0 +1,66 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `packages/python_bindings/src/lib.rs`."><title>lib.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../static.files/rustdoc-0c87338a.css"><meta name="rustdoc-vars" data-root-path="../../" data-static-root-path="../../static.files/" data-current-crate="pixelator_core_py" data-themes="" data-resource-suffix="" data-rustdoc-version="1.99.1 (58cf8f9c3 2026-10-13)" data-channel="1.99.1" data-search-js="search-cf4fc35e.js" data-stringdex-js="stringdex-b5109af9.js" data-settings-js="settings-170eb4bf.js" ><script src="../../static.files/storage-41dd4d93.js"></script><script defer src="../../static.files/src-script-813739b1.js"></script><script defer src="../../src-files.js"></script><script defer src="../../static.files/main-417ebf0a.js"></script><noscript><link rel="stylesheet" href="../../static.files/noscript-9f56287d.css"></noscript><link rel="alternate icon" type="image/png" href="../../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><a class="skip-main-content" href="#main-content">Skip to main content</a><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><section id="main-content" class="content" tabindex="-1"><div class="main-heading"><h1><div class="sub-heading">pixelator_core_py/</div>lib.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap digits-2"><pre class="rust"><code><a href=#1 id=1 data-nosnippet>1</a><span class="doccomment">//! Extension entry point. Bindings live in [`graph`], [`graph_collapse`] and [`edgelist`]; this
+<a href=#2 id=2 data-nosnippet>2</a>//! module only installs the allocator and registers the public names.
+<a href=#3 id=3 data-nosnippet>3</a>
+<a href=#4 id=4 data-nosnippet>4</a></span><span class="kw">use </span>pyo3::prelude::<span class="kw-2">*</span>;
+<a href=#5 id=5 data-nosnippet>5</a>
+<a href=#6 id=6 data-nosnippet>6</a><span class="kw">mod </span>convert;
+<a href=#7 id=7 data-nosnippet>7</a><span class="kw">mod </span>edgelist;
+<a href=#8 id=8 data-nosnippet>8</a><span class="kw">mod </span>graph;
+<a href=#9 id=9 data-nosnippet>9</a><span class="kw">mod </span>graph_collapse;
+<a href=#10 id=10 data-nosnippet>10</a>
+<a href=#11 id=11 data-nosnippet>11</a><span class="comment">// MiMalloc backs every Rust allocation in this extension, including the
+<a href=#12 id=12 data-nosnippet>12</a>// statically linked `pixelator-core` code, so the hot edgelist path keeps its
+<a href=#13 id=13 data-nosnippet>13</a>// allocator performance even when driven from Python -- except on macOS, where
+<a href=#14 id=14 data-nosnippet>14</a>// mimalloc reserves a fixed pthread thread-local-storage slot for the per-thread
+<a href=#15 id=15 data-nosnippet>15</a>// heap pointer. PyArrow bundles its own, independently-built mimalloc that
+<a href=#16 id=16 data-nosnippet>16</a>// reserves the same kind of slot, and when both are loaded into the same process
+<a href=#17 id=17 data-nosnippet>17</a>// they clobber each other's per-thread heap pointer. Falling back to the system
+<a href=#18 id=18 data-nosnippet>18</a>// allocator on macOS avoids that.
+<a href=#19 id=19 data-nosnippet>19</a></span><span class="attr">#[cfg(not(target_os = <span class="string">"macos"</span>))]
+<a href=#20 id=20 data-nosnippet>20</a>#[global_allocator]
+<a href=#21 id=21 data-nosnippet>21</a></span><span class="kw">static </span>GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+<a href=#22 id=22 data-nosnippet>22</a>
+<a href=#23 id=23 data-nosnippet>23</a><span class="attr">#[pymodule(name = <span class="string">"pixelator_core"</span>)]
+<a href=#24 id=24 data-nosnippet>24</a></span><span class="kw">mod </span>pixelator_core_py {
+<a href=#25 id=25 data-nosnippet>25</a>    <span class="kw">use </span>pyo3::prelude::<span class="kw-2">*</span>;
+<a href=#26 id=26 data-nosnippet>26</a>
+<a href=#27 id=27 data-nosnippet>27</a>    <span class="attr">#[pymodule_export]
+<a href=#28 id=28 data-nosnippet>28</a>    </span><span class="kw">use </span><span class="kw">super</span>::graph::find_graph_statistics;
+<a href=#29 id=29 data-nosnippet>29</a>
+<a href=#30 id=30 data-nosnippet>30</a>    <span class="attr">#[pymodule_export]
+<a href=#31 id=31 data-nosnippet>31</a>    </span><span class="kw">use </span><span class="kw">super</span>::graph::run_connected_components;
+<a href=#32 id=32 data-nosnippet>32</a>
+<a href=#33 id=33 data-nosnippet>33</a>    <span class="attr">#[pymodule_export]
+<a href=#34 id=34 data-nosnippet>34</a>    </span><span class="kw">use </span><span class="kw">super</span>::graph::run_label_propagation;
+<a href=#35 id=35 data-nosnippet>35</a>
+<a href=#36 id=36 data-nosnippet>36</a>    <span class="attr">#[pymodule_export]
+<a href=#37 id=37 data-nosnippet>37</a>    </span><span class="kw">use </span><span class="kw">super</span>::graph::run_leiden;
+<a href=#38 id=38 data-nosnippet>38</a>
+<a href=#39 id=39 data-nosnippet>39</a>    <span class="attr">#[pymodule_export]
+<a href=#40 id=40 data-nosnippet>40</a>    </span><span class="kw">use </span><span class="kw">super</span>::graph::run_hybrid_community_detection;
+<a href=#41 id=41 data-nosnippet>41</a>
+<a href=#42 id=42 data-nosnippet>42</a>    <span class="attr">#[pymodule_export]
+<a href=#43 id=43 data-nosnippet>43</a>    </span><span class="kw">use </span><span class="kw">super</span>::graph::PyGraphProperties;
+<a href=#44 id=44 data-nosnippet>44</a>
+<a href=#45 id=45 data-nosnippet>45</a>    <span class="attr">#[pymodule_export]
+<a href=#46 id=46 data-nosnippet>46</a>    </span><span class="kw">use </span><span class="kw">super</span>::graph_collapse::py_graph_collapse;
+<a href=#47 id=47 data-nosnippet>47</a>
+<a href=#48 id=48 data-nosnippet>48</a>    <span class="attr">#[pymodule_export]
+<a href=#49 id=49 data-nosnippet>49</a>    </span><span class="kw">use </span><span class="kw">super</span>::edgelist::run_edgelist;
+<a href=#50 id=50 data-nosnippet>50</a>
+<a href=#51 id=51 data-nosnippet>51</a>    <span class="attr">#[pymodule_export]
+<a href=#52 id=52 data-nosnippet>52</a>    </span><span class="kw">use </span><span class="kw">super</span>::edgelist::encode_dna_2bit;
+<a href=#53 id=53 data-nosnippet>53</a>
+<a href=#54 id=54 data-nosnippet>54</a>    <span class="attr">#[pymodule_export]
+<a href=#55 id=55 data-nosnippet>55</a>    </span><span class="kw">use </span><span class="kw">super</span>::edgelist::decode_dna_2bit;
+<a href=#56 id=56 data-nosnippet>56</a>
+<a href=#57 id=57 data-nosnippet>57</a>    <span class="attr">#[pymodule_init]
+<a href=#58 id=58 data-nosnippet>58</a>    </span><span class="kw">fn </span>init(m: <span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyModule&gt;) -&gt; PyResult&lt;()&gt; {
+<a href=#59 id=59 data-nosnippet>59</a>        pyo3_log::Logger::new(m.py(), pyo3_log::Caching::Loggers)<span class="question-mark">?
+<a href=#60 id=60 data-nosnippet>60</a>            </span>.install()
+<a href=#61 id=61 data-nosnippet>61</a>            .expect(<span class="string">"Someone installed a logger before pixelator_core"</span>);
+<a href=#62 id=62 data-nosnippet>62</a>        m.add(<span class="string">"__version__"</span>, <span class="macro">env!</span>(<span class="string">"CARGO_PKG_VERSION"</span>))<span class="question-mark">?</span>;
+<a href=#63 id=63 data-nosnippet>63</a>        <span class="prelude-val">Ok</span>(())
+<a href=#64 id=64 data-nosnippet>64</a>    }
+<a href=#65 id=65 data-nosnippet>65</a>}
+</code></pre></div></section></main></body></html>
