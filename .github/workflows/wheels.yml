@@ -29,8 +29,8 @@ jobs:
       # release would publish 1.0.2 wheels, and PyPI does not allow re-uploads.
       #
       # What: compare the version in Cargo.toml with
-      #   - on a release PR: the version in .release-please-manifest.json
       #   - on a release: the tag, without the "v" (v1.1.0 -> 1.1.0)
+      #   - on a release PR: the version in .release-please-manifest.json
       - name: Check Cargo.toml version
         run: |
           set -euo pipefail
