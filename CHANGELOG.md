@@ -5,6 +5,23 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.0](https://github.com/Aratz/pixelator-core/compare/v1.0.3...v2.0.0) (2026-11-06)
+
+
+### ⚠ BREAKING CHANGES
+
+* **python:** rename the demo API ([#15](https://github.com/Aratz/pixelator-core/issues/15))
+
+### Features
+
+* **cli:** add colored output ([#12](https://github.com/Aratz/pixelator-core/issues/12)) ([b250076](https://github.com/Aratz/pixelator-core/commit/b2500761ff2a03a16f60034948abcd572d9f67fc))
+* **python:** rename the demo API ([#15](https://github.com/Aratz/pixelator-core/issues/15)) ([081a074](https://github.com/Aratz/pixelator-core/commit/081a0743d68bf3b995a08463cd09723bf71eee14))
+
+
+### Bug Fixes
+
+* **core:** handle empty input ([#13](https://github.com/Aratz/pixelator-core/issues/13)) ([9812fdf](https://github.com/Aratz/pixelator-core/commit/9812fdf8a190bfac3e44d2336edd1a355528a251))
+
 ## [1.0.3](https://github.com/Aratz/pixelator-core/compare/v1.0.2...v1.0.3) (2026-10-30)
 
 
