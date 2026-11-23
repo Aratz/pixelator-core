@@ -4,6 +4,7 @@ use rand::seq::SliceRandom;
 use std::time::Duration;
 use std::time::Instant;
 
+use crate::common::cancellation::{CancellationToken, Cancelled};
 use crate::common::graph::Graph;
 use crate::common::node_partitioning::NodePartitioning;
 use crate::common::types::NodeIdx;
@@ -14,23 +15,47 @@ pub fn fast_label_propagation<P>(
     graph: &Graph<u8>,
     epochs: u64,
     assignment_strategy: &dyn AssignmentStrategy<P>,
-    mut node_partition: P,
+    node_partition: P,
 ) -> P
+where
+    P: NodePartitioning,
+{
+    fast_label_propagation_cancellable(
+        graph,
+        epochs,
+        assignment_strategy,
+        node_partition,
+        &CancellationToken::new(),
+    )
+    .expect("a fresh token is never cancelled")
+}
+
+/// Same as [`fast_label_propagation`], but returns `Err(Cancelled)` soon after `cancel` is
+/// cancelled.
+pub fn fast_label_propagation_cancellable<P>(
+    graph: &Graph<u8>,
+    epochs: u64,
+    assignment_strategy: &dyn AssignmentStrategy<P>,
+    mut node_partition: P,
+    cancel: &CancellationToken,
+) -> Result<P, Cancelled>
 where
     P: NodePartitioning,
 {
     for epoch in 0..epochs {
         info!("Starting epoch {}...", epoch + 1);
-        node_partition = label_propagation_epoch::<P>(graph, node_partition, assignment_strategy);
+        node_partition =
+            label_propagation_epoch::<P>(graph, node_partition, assignment_strategy, cancel)?;
     }
-    node_partition
+    Ok(node_partition)
 }
 
 pub fn label_propagation_epoch<P>(
     graph: &Graph<u8>,
     mut node_partition: P,
     assignment_strategy: &dyn AssignmentStrategy<P>,
-) -> P
+    cancel: &CancellationToken,
+) -> Result<P, Cancelled>
 where
     P: NodePartitioning,
 {
@@ -46,6 +71,10 @@ where
     let mut last_iteration = 0usize;
 
     while let Some(node_i) = node_queue.pop_front() {
+        if cancel.is_cancelled() {
+            bar.finish_and_clear();
+            return Err(Cancelled);
+        }
         iteration += 1;
         if iteration.is_multiple_of(1_000_000) {
             update_progress_bar(
@@ -61,7 +90,7 @@ where
     bar.finish_and_clear();
 
     info!("Label propagation finished after {} iterations.", iteration);
-    clean_partitions(graph, node_partition)
+    Ok(clean_partitions(graph, node_partition))
 }
 
 fn update_progress_bar(
@@ -140,7 +169,13 @@ mod tests {
             0, 0, 0, 0, 0, 0, 1, 1, 1, 1,
         ]);
 
-        partitioning = label_propagation_epoch(&graph, partitioning, &DefaultAssignmentStrategy);
+        partitioning = label_propagation_epoch(
+            &graph,
+            partitioning,
+            &DefaultAssignmentStrategy,
+            &CancellationToken::new(),
+        )
+        .unwrap();
         partitioning.normalize();
 
         let partition_map = partitioning.node_partition_map;
@@ -157,6 +192,25 @@ mod tests {
 
         assert_ne!(partition_map[0], partition_map[3]);
         assert_ne!(partition_map[0], partition_map[6]);
+    }
+
+    #[test]
+    fn test_flp_cancellable_stops_when_cancelled() {
+        let graph = get_example_graph();
+        let partitioning =
+            FastNodePartitioning::initialize_with_singlet_partitions(graph.get_num_nodes());
+        let cancel = CancellationToken::new();
+        cancel.cancel();
+
+        let result = fast_label_propagation_cancellable(
+            &graph,
+            10,
+            &DefaultAssignmentStrategy,
+            partitioning,
+            &cancel,
+        );
+
+        assert_eq!(result.err(), Some(Cancelled));
     }
 
     #[test]
