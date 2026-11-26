@@ -1,6 +1,5 @@
 //! Bindings for graph statistics, connected components, and community detection.
 
-use std::sync::mpsc::{channel, RecvTimeoutError};
 use std::time::Duration;
 
 use pixelator_core::common::cancellation::{run_with, CancellationToken};
@@ -43,7 +42,6 @@ fn detach_io<T: Send>(
     job: impl FnOnce() -> Result<T, Box<dyn std::error::Error + Send + Sync>> + Send,
 ) -> PyResult<T> {
     let cancel = CancellationToken::new();
-    let (done_tx, mut done_rx) = channel::<()>();
 
     std::thread::scope(|scope| {
         let worker = {
@@ -52,26 +50,12 @@ fn detach_io<T: Send>(
                 debug!("Entering detached Rust execution");
                 let res = run_with(cancel, job).unwrap_or_else(|cancelled| Err(cancelled.into()));
                 debug!("Exiting detached Rust execution");
-                let _ = done_tx.send(());
                 res
             })
         };
 
-        loop {
-            // `done_rx` is moved in and handed back because a `&Receiver` is not `Send` and so
-            // cannot be captured by a `detach` closure. A panicking worker drops `done_tx`,
-            // which also ends the wait.
-            let (rx, timed_out) = py.detach(move || {
-                let timed_out = matches!(
-                    done_rx.recv_timeout(SIGNAL_CHECK_INTERVAL),
-                    Err(RecvTimeoutError::Timeout)
-                );
-                (done_rx, timed_out)
-            });
-            done_rx = rx;
-            if !timed_out {
-                break;
-            }
+        while !worker.is_finished() {
+            py.detach(|| std::thread::sleep(SIGNAL_CHECK_INTERVAL));
 
             if let Err(err) = py.check_signals() {
                 cancel.cancel();
